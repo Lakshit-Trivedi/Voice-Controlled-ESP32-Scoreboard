@@ -1,0 +1,100 @@
+#include <TM1637Display.h>
+
+// TM1637 Pins (CLK, DIO)
+#define TM1637_CLK 22
+#define TM1637_DIO 21
+#define RESET_BUTTON 15    // Push button (connect to GND)
+
+const int micPin = 34;  // KY-038 analog pin (adjust as needed)
+
+int teamAScore = 0;
+int teamBScore = 0;
+
+int micState = LOW;
+int lastMicState = LOW;
+
+int clapCount = 0;
+unsigned long firstClapTime = 0;
+const unsigned long maxClapGap = 500;  // Max time between claps (ms)
+const unsigned long minClapGap = 50;   // Min time to avoid false triggers
+
+bool waiting = false;
+bool alreadyProcessed = false;
+
+TM1637Display display(TM1637_CLK, TM1637_DIO);  // Initialize TM1637
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(micPin, INPUT);
+  pinMode(RESET_BUTTON, INPUT_PULLUP);
+
+  // TM1637 Setup
+  display.setBrightness(7);  // Brightness (0-7)
+  display.showNumberDecEx(teamAScore * 100 + teamBScore, 0b01000000, true);  // Initial display: "00 00"
+}
+
+void loop() {
+  micState = digitalRead(micPin);  // Still using digital for now (adjust if needed)
+  unsigned long now = millis();
+  if (digitalRead(RESET_BUTTON) == LOW) {
+    delay(50); // Debounce
+    if (digitalRead(RESET_BUTTON) == LOW) {
+      resetScores();
+      while (digitalRead(RESET_BUTTON) == LOW); // Wait for release
+    }
+  }
+
+  // Rising edge detection (clap)
+  if (micState == HIGH && lastMicState == LOW && (now - firstClapTime > minClapGap)) {
+    clapCount++;
+    Serial.println("👏 Clap detected!");
+
+    if (clapCount == 1) {
+      firstClapTime = now;
+      waiting = true;
+      alreadyProcessed = false;
+    } else if (clapCount == 2 && waiting && !alreadyProcessed) {
+      // Double clap → Team B +1
+      teamBScore++;
+      updateDisplay();
+      Serial.print("Team A: "); Serial.print(teamAScore);
+      Serial.print(" | Team B: "); Serial.println(teamBScore);
+
+      alreadyProcessed = true;
+      waiting = false;
+      clapCount = 0;
+    }
+  }
+
+  // Timeout for single clap
+  if (waiting && (now - firstClapTime > maxClapGap)) {
+    if (clapCount == 1 && !alreadyProcessed) {
+      // Single clap → Team A +1
+      teamAScore++;
+      updateDisplay();
+      Serial.print("Team A: "); Serial.print(teamAScore);
+      Serial.print(" | Team B: "); Serial.println(teamBScore);
+    }
+    clapCount = 0;
+    waiting = false;
+    alreadyProcessed = false;
+  }
+
+
+  lastMicState = micState;
+
+}
+
+// Update TM1637 display (AA BB format)
+void updateDisplay() {
+  
+  int scoreDisplay = (teamAScore * 100) + teamBScore;  // Combines scores (e.g., 5-3 → "0503")
+  display.showNumberDecEx(scoreDisplay, 0b01000000, true);  // Colon in middle: "AA:BB"
+}
+
+void resetScores() {
+  teamAScore = 0;
+  teamBScore = 0;
+  updateDisplay();
+  Serial.println("Scores reset to 00:00");
+}
